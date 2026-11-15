@@ -1,0 +1,15 @@
+{{- if .Values.metrics.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: gada-app
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: gada-app
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+{{- end }}
