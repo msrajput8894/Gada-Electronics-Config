@@ -41,7 +41,7 @@ spec:
           defaultDashboardsTimezone: Asia/Kolkata
           resources:
             requests: { cpu: 50m, memory: 128Mi }
-            limits: { memory: 300Mi }
+            limits: { memory: 768Mi }
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
