@@ -1,0 +1,60 @@
+name: Promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Environment that should run the version currently in stage
+        type: choice
+        required: true
+        options:
+          - preprod
+          - prod
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    name: Open promotion pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prepare the promotion branch
+        id: prep
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          TAG="$(sed -n 's/^  tag: "\(.*\)"$/\1/p' envs/stage/values.yaml)"
+          if [ -z "$TAG" ]; then
+            echo "No image tag found in envs/stage/values.yaml"
+            exit 1
+          fi
+          sed -i "s|^  tag: .*|  tag: \"${TAG}\"|" "envs/${TARGET}/values.yaml"
+          if git diff --quiet; then
+            echo "${TARGET} already runs ${TAG}, nothing to promote"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BRANCH="promote-${TARGET}-${TAG}"
+          git config user.name "gada-ci"
+          git config user.email "gada-ci@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git commit -am "${TARGET}: promote ${TAG}"
+          git push origin "$BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Open the pull request
+        if: steps.prep.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.prep.outputs.branch }}
+          TAG: ${{ steps.prep.outputs.tag }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          gh pr create --base main --head "$BRANCH" \
+            --title "Promote ${TAG} to ${TARGET}" \
+            --body "Copies the version running in stage (${TAG}) into ${TARGET}. Merging this pull request is the approval: Argo CD will deploy it."
