@@ -31,3 +31,6 @@ hpa:
 
 ingress:
   host: ""
+
+metrics:
+  enabled: true
