@@ -16,3 +16,10 @@ for env in stage preprod prod; do
     --from-literal=admin-password="$(openssl rand -hex 12)"
   echo "$ns: created gada-secrets"
 done
+
+kubectl get namespace monitoring >/dev/null 2>&1 || kubectl create namespace monitoring
+if ! kubectl -n monitoring get secret grafana-admin >/dev/null 2>&1; then
+  kubectl -n monitoring create secret generic grafana-admin \
+    --from-literal=admin-user=admin \
+    --from-literal=admin-password="$(openssl rand -base64 18 | tr -d '=+/')"
+fi
