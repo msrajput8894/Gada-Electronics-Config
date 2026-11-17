@@ -1,0 +1,73 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gada-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: gada-app
+      rules:
+        - alert: GadaTargetDown
+          expr: up{pod=~"gada-app.*"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Metrics target {{ $labels.pod }} is down"
+            runbook: "kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}; check events, then logs --previous"
+        - alert: GadaHighErrorRate
+          expr: |
+            sum by (namespace) (rate(http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+              / sum by (namespace) (rate(http_request_duration_seconds_count[5m])) > 0.05
+            and sum by (namespace) (rate(http_request_duration_seconds_count[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "More than 5% of requests fail in {{ $labels.namespace }}"
+            runbook: "Check Grafana error panel, then kubectl logs deploy/gada-app; did a rollout just happen (argocd app history)?"
+        - alert: GadaSlowRequests
+          expr: |
+            histogram_quantile(0.95, sum by (namespace, le) (rate(http_request_duration_seconds_bucket[5m]))) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "p95 latency above 1s in {{ $labels.namespace }}"
+            runbook: "Check CPU and memory panels, MongoDB pod health, and recent deploys"
+    - name: kubernetes-health
+      rules:
+        - alert: PodRestartingOften
+          expr: increase(kube_pod_container_status_restarts_total[15m]) > 2
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} restarted more than twice in 15m"
+            runbook: "kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }} (look at Last State and Reason)"
+        - alert: PodOOMKilled
+          expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} was OOMKilled"
+            runbook: "Compare usage with the limit; raise the limit in Git only if usage is genuinely that high"
+        - alert: MemoryNearLimit
+          expr: |
+            max by (namespace, pod) (container_memory_working_set_bytes{container!="",container!="POD"})
+              / max by (namespace, pod) (kube_pod_container_resource_limits{resource="memory"}) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} uses over 90% of its memory limit"
+            runbook: "Steadily climbing means a leak; flat means the limit is too tight"
+        - alert: PodNotReady
+          expr: sum by (namespace, pod) (kube_pod_status_ready{condition="false"}) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} not ready for 10 minutes"
+            runbook: "kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}; check probes and events"
