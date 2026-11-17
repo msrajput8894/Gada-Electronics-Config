@@ -374,7 +374,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)",
+              "expr": "count(ALERTS{alertstate=\"firing\",alertname!=\"Watchdog\"}) or vector(0)",
               "legendFormat": "",
               "refId": "A",
               "editorMode": "code"
@@ -830,7 +830,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "ALERTS{alertstate=\"firing\"}",
+              "expr": "ALERTS{alertstate=\"firing\",alertname!=\"Watchdog\"}",
               "format": "table",
               "instant": true,
               "refId": "A",
