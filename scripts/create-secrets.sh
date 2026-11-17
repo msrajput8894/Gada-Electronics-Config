@@ -23,3 +23,18 @@ if ! kubectl -n monitoring get secret grafana-admin >/dev/null 2>&1; then
     --from-literal=admin-user=admin \
     --from-literal=admin-password="$(openssl rand -base64 18 | tr -d '=+/')"
 fi
+
+# Alertmanager's Slack webhook. The URL lives in a local file, never in Git:
+#   ~/.config/gada/slack-webhook   (override with SLACK_WEBHOOK_FILE)
+if ! kubectl -n monitoring get secret alertmanager-slack >/dev/null 2>&1; then
+  webhook_file="${SLACK_WEBHOOK_FILE:-$HOME/.config/gada/slack-webhook}"
+  if [ -s "$webhook_file" ]; then
+    kubectl -n monitoring create secret generic alertmanager-slack \
+      --from-literal=url="$(tr -d '\n' < "$webhook_file")"
+    echo "monitoring: created alertmanager-slack"
+  else
+    echo "WARNING: no Slack webhook at $webhook_file; alerts will not be delivered" >&2
+    # Alertmanager mounts this secret, so create an empty-valued one to let it start.
+    kubectl -n monitoring create secret generic alertmanager-slack --from-literal=url="http://localhost/unconfigured"
+  fi
+fi
