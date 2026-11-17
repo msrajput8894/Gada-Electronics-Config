@@ -66,7 +66,7 @@ spec:
                     title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})'
                     text: |-
                       {{ range .Alerts }}*{{ .Annotations.summary }}*
-                      Runbook: {{ .Annotations.runbook }}
+                      {{ if .Annotations.runbook }}Runbook: {{ .Annotations.runbook }}{{ else if .Annotations.runbook_url }}Runbook: {{ .Annotations.runbook_url }}{{ end }}
                       {{ end }}
             templates:
               - /etc/alertmanager/config/*.tmpl
