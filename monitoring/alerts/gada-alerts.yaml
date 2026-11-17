@@ -71,3 +71,13 @@ spec:
           annotations:
             summary: "{{ $labels.namespace }}/{{ $labels.pod }} not ready for 10 minutes"
             runbook: "kubectl -n {{ $labels.namespace }} describe pod {{ $labels.pod }}; check probes and events"
+    - name: gada-availability
+      rules:
+        - alert: GadaAppUnavailable
+          expr: kube_deployment_status_replicas_available{deployment="gada-app"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No gada-app pods available in {{ $labels.namespace }}"
+            runbook: "kubectl -n {{ $labels.namespace }} get pods,events; check argocd app and the last rollout"
