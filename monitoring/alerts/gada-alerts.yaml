@@ -83,3 +83,39 @@ spec:
           annotations:
             summary: "No gada-app pods available in {{ $labels.namespace }}"
             runbook: "kubectl -n {{ $labels.namespace }} get pods,events; check argocd app and the last rollout"
+    - name: gada-slo-recording
+      rules:
+        - record: gada:sli_error_ratio:rate5m
+          expr: |
+            sum(rate(http_request_duration_seconds_count{namespace="gada-prod",status_code=~"5.."}[5m]))
+              / sum(rate(http_request_duration_seconds_count{namespace="gada-prod"}[5m]))
+        - record: gada:sli_error_ratio:rate30m
+          expr: |
+            sum(rate(http_request_duration_seconds_count{namespace="gada-prod",status_code=~"5.."}[30m]))
+              / sum(rate(http_request_duration_seconds_count{namespace="gada-prod"}[30m]))
+        - record: gada:sli_error_ratio:rate1h
+          expr: |
+            sum(rate(http_request_duration_seconds_count{namespace="gada-prod",status_code=~"5.."}[1h]))
+              / sum(rate(http_request_duration_seconds_count{namespace="gada-prod"}[1h]))
+        - record: gada:sli_error_ratio:rate6h
+          expr: |
+            sum(rate(http_request_duration_seconds_count{namespace="gada-prod",status_code=~"5.."}[6h]))
+              / sum(rate(http_request_duration_seconds_count{namespace="gada-prod"}[6h]))
+    - name: gada-slo-alerts
+      rules:
+        - alert: GadaSLOFastBurn
+          expr: gada:sli_error_ratio:rate1h > 0.144 and gada:sli_error_ratio:rate5m > 0.144
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Prod is burning its 99% SLO error budget 14x too fast"
+            runbook: "Check the error panel, recent rollout (argocd app history gada-prod), and roll back if it started with a deploy"
+        - alert: GadaSLOSlowBurn
+          expr: gada:sli_error_ratio:rate6h > 0.06 and gada:sli_error_ratio:rate30m > 0.06
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Prod is burning its 99% SLO error budget 6x too fast"
+            runbook: "A steady trickle of 5xx; find the failing route in the error panel and check logs"
