@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: synthetic
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/msrajput8894/Gada-Electronics-Config
+    targetRevision: main
+    path: monitoring/synthetic
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # The PodMonitor needs the monitoring CRDs; if they are not ready yet, try again.
+    retry:
+      limit: 6
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

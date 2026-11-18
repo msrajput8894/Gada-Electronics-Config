@@ -38,3 +38,10 @@ if ! kubectl -n monitoring get secret alertmanager-slack >/dev/null 2>&1; then
     kubectl -n monitoring create secret generic alertmanager-slack --from-literal=url="http://localhost/unconfigured"
   fi
 fi
+
+# Password for the synthetic monitor's customer account (same value in every environment).
+if ! kubectl -n monitoring get secret synthetic-monitor >/dev/null 2>&1; then
+  kubectl -n monitoring create secret generic synthetic-monitor \
+    --from-literal=password="$(openssl rand -hex 16)"
+  echo "monitoring: created synthetic-monitor"
+fi
