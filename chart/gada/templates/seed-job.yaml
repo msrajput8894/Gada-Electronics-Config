@@ -1,0 +1,54 @@
+{{- /*
+  Seeds starter products and the admin account after every Argo CD sync.
+  Safe to repeat: src/seed.js only inserts products when the collection is empty
+  and only creates the admin when missing. Retries until MongoDB accepts connections.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gada-seed
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 10
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: gada-seed
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: seed
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: ["node", "src/seed.js"]
+          envFrom:
+            - configMapRef:
+                name: gada-config
+          env:
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: mongo-root-password
+            - name: MONGO_URI
+              value: mongodb://gada_root:$(MONGO_PASSWORD)@mongo-0.mongo.{{ .Release.Namespace }}.svc.cluster.local:27017/gada?authSource=admin
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: jwt-secret
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: admin-password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
