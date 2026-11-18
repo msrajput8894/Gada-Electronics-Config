@@ -119,3 +119,41 @@ spec:
           annotations:
             summary: "Prod is burning its 99% SLO error budget 6x too fast"
             runbook: "A steady trickle of 5xx; find the failing route in the error panel and check logs"
+    - name: gada-synthetic
+      rules:
+        - alert: GadaSyntheticJourneyFailing
+          expr: avg_over_time(gada_synthetic_journey_success{env="prod"}[3m]) < 0.67
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Prod customer journey is failing for the monitor account"
+            runbook: "Grafana dashboard 'Gada synthetic availability' shows which step fails; failed checks are in Loki: {namespace=\"monitoring\", app=\"gada-synthetic\"} |= \"failed\""
+        - alert: GadaSyntheticJourneyFailingNonProd
+          expr: avg_over_time(gada_synthetic_journey_success{env!="prod"}[3m]) < 0.67
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "The {{ $labels.env }} customer journey is failing for the monitor account"
+            runbook: "Check which step fails on the synthetic dashboard, then kubectl -n gada-{{ $labels.env }} get pods"
+        - alert: GadaSyntheticStepSlow
+          expr: |
+            max by (env, step) (gada_synthetic_duration_seconds) > 2
+              and on (env, step) gada_synthetic_success == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Step {{ $labels.step }} in {{ $labels.env }} takes over 2 seconds"
+            runbook: "Check p95 latency, CPU and MongoDB; look for a recent rollout"
+        - alert: GadaSyntheticMonitorSilent
+          expr: |
+            absent(gada_synthetic_last_run_timestamp_seconds)
+              or (time() - max(gada_synthetic_last_run_timestamp_seconds)) > 300
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "The synthetic monitor stopped reporting, so availability is not being measured"
+            runbook: "kubectl -n monitoring get pods -l app=gada-synthetic; describe the pod and read its logs"

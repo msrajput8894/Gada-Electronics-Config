@@ -22,6 +22,7 @@ kubectl apply -f "$here/apps/dashboards.yaml"
 kubectl apply -f "$here/apps/alerts.yaml"
 kubectl apply -f "$here/apps/loki.yaml"
 kubectl apply -f "$here/apps/alloy.yaml"
+kubectl apply -f "$here/apps/synthetic.yaml"
 echo "Waiting for the monitoring CRDs..."
 for i in $(seq 1 120); do
   kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1 && break

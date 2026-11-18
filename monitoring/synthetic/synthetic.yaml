@@ -1,0 +1,323 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gada-synthetic-script
+  namespace: monitoring
+data:
+  synthetic.js: |
+    'use strict';
+    // Synthetic monitor for Gada Electronics.
+    // Every INTERVAL_SECONDS it plays one customer journey against each target with a dedicated
+    // monitor account, checks status codes and response bodies, logs every failure as JSON, and
+    // exposes the results in Prometheus text format on :9101/metrics.
+    // No dependencies: Node 18+ only (built-in fetch and http).
+
+    const http = require('http');
+
+    const TARGETS = JSON.parse(process.env.TARGETS || '[]'); // [{ "env": "prod", "url": "http://..." }]
+    const INTERVAL_MS = Number(process.env.INTERVAL_SECONDS || 30) * 1000;
+    const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 5000);
+    const EMAIL = process.env.MONITOR_EMAIL || 'monitor@gada.local';
+    const PASSWORD = process.env.MONITOR_PASSWORD || '';
+    const PORT = Number(process.env.METRICS_PORT || 9101);
+    const STEPS = ['health', 'products', 'login', 'cart_add', 'cart_remove'];
+
+    if (!TARGETS.length) throw new Error('TARGETS is empty');
+    if (PASSWORD.length < 8) throw new Error('MONITOR_PASSWORD must be at least 8 characters');
+
+    // ---- state exported as metrics -------------------------------------------------------------
+    const state = {};
+    for (const t of TARGETS) {
+      state[t.env] = { lastRun: 0, journey: 0, steps: {}, counts: {} };
+      for (const s of STEPS) {
+        state[t.env].steps[s] = { success: 0, seconds: 0 };
+        state[t.env].counts[s] = { ok: 0, fail: 0, skipped: 0 };
+      }
+    }
+
+    function log(level, msg, fields) {
+      console.log(JSON.stringify({ time: new Date().toISOString(), level, msg, ...fields }));
+    }
+
+    // ---- one request, with the expected result checked -----------------------------------------
+    async function call(base, method, path, { token, body, expectStatus, check }) {
+      const started = process.hrtime.bigint();
+      const headers = { accept: 'application/json', 'user-agent': 'gada-synthetic/1.0' };
+      if (body !== undefined) headers['content-type'] = 'application/json';
+      if (token) headers.authorization = `Bearer ${token}`;
+      const out = { ok: false, status: 0, data: null, detail: '' };
+      try {
+        const res = await fetch(base + path, {
+          method,
+          headers,
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+        out.status = res.status;
+        const text = await res.text();
+        try {
+          out.data = text ? JSON.parse(text) : null;
+        } catch (e) {
+          out.detail = `body is not JSON: ${text.slice(0, 120)}`;
+        }
+        if (res.status !== expectStatus) {
+          out.detail = out.detail || `expected ${expectStatus}, got ${res.status}: ${text.slice(0, 160)}`;
+        } else if (check && !check(out.data)) {
+          out.detail = out.detail || `unexpected body: ${text.slice(0, 160)}`;
+        } else {
+          out.ok = true;
+        }
+      } catch (e) {
+        out.detail = e.name === 'TimeoutError' ? `no answer within ${TIMEOUT_MS} ms` : `request failed: ${e.cause?.code || e.message}`;
+      }
+      out.seconds = Number(process.hrtime.bigint() - started) / 1e9;
+      return out;
+    }
+
+    // ---- the customer journey ------------------------------------------------------------------
+    async function runJourney(target) {
+      const { env, url } = target;
+      const base = url.replace(/\/$/, '');
+      const results = {};
+      let token = null;
+      let product = null;
+      let added = false;
+
+      async function step(name, needs, fn) {
+        if (needs && !needs()) {
+          results[name] = { skipped: true, seconds: 0 };
+          return;
+        }
+        results[name] = await fn();
+      }
+
+      await step('health', null, () =>
+        call(base, 'GET', '/health', { expectStatus: 200, check: (d) => d && d.status === 'ok' }));
+
+      await step('products', null, async () => {
+        const r = await call(base, 'GET', '/api/products?limit=20', {
+          expectStatus: 200,
+          check: (d) => d && Array.isArray(d.items) && d.items.length > 0,
+        });
+        if (r.ok) product = r.data.items.find((p) => p.stock > 0) || null;
+        if (r.ok && !product) {
+          r.ok = false;
+          r.detail = 'no product with stock > 0 in the first page';
+        }
+        return r;
+      });
+
+      await step('login', null, async () => {
+        let r = await call(base, 'POST', '/api/auth/login', {
+          body: { email: EMAIL, password: PASSWORD },
+          expectStatus: 200,
+          check: (d) => d && typeof d.token === 'string',
+        });
+        if (!r.ok && r.status === 401) {
+          // First run in a fresh environment: the monitor account does not exist yet.
+          const reg = await call(base, 'POST', '/api/auth/register', {
+            body: { name: 'Synthetic Monitor', email: EMAIL, password: PASSWORD },
+            expectStatus: 201,
+            check: (d) => d && typeof d.token === 'string',
+          });
+          log('info', 'monitor account registered', { env, ok: reg.ok, status: reg.status });
+          r = reg.ok ? reg : r;
+        }
+        if (r.ok) token = r.data.token;
+        return r;
+      });
+
+      await step('cart_add', () => token && product, async () => {
+        const r = await call(base, 'POST', '/api/cart/items', {
+          token,
+          body: { productId: product.id || product._id, quantity: 1 },
+          expectStatus: 201,
+          check: (d) => d && d.cart && Array.isArray(d.cart.items),
+        });
+        added = r.ok;
+        return r;
+      });
+
+      await step('cart_remove', () => token && product && added, async () => {
+        const id = product.id || product._id;
+        return call(base, 'DELETE', `/api/cart/items/${id}`, {
+          token,
+          expectStatus: 200,
+          check: (d) => d && d.cart && !d.cart.items.some((i) => (i.product && (i.product.id || i.product._id)) === id),
+        });
+      });
+
+      // Never leave the monitor's cart holding stock, even when a step failed halfway.
+      if (token && product && added && !results.cart_remove?.ok) {
+        await call(base, 'DELETE', `/api/cart/items/${product.id || product._id}`, { token, expectStatus: 200 });
+      }
+      return results;
+    }
+
+    async function tick(target) {
+      const { env } = target;
+      let results;
+      try {
+        results = await runJourney(target);
+      } catch (e) {
+        log('error', 'synthetic journey crashed', { env, detail: e.message });
+        return;
+      }
+      const s = state[env];
+      let allOk = true;
+      for (const name of STEPS) {
+        const r = results[name];
+        s.steps[name] = { success: r.ok ? 1 : 0, seconds: r.seconds || 0 };
+        if (r.skipped) {
+          s.counts[name].skipped++;
+          allOk = false;
+        } else if (r.ok) {
+          s.counts[name].ok++;
+        } else {
+          s.counts[name].fail++;
+          allOk = false;
+          log('error', 'synthetic check failed', {
+            env, step: name, status: r.status, detail: r.detail, durationMs: Math.round(r.seconds * 1000),
+          });
+        }
+      }
+      s.journey = allOk ? 1 : 0;
+      s.lastRun = Date.now() / 1000;
+      log(allOk ? 'info' : 'warn', allOk ? 'journey ok' : 'journey failed', { env });
+    }
+
+    // ---- metrics endpoint ----------------------------------------------------------------------
+    function metrics() {
+      const lines = [];
+      const add = (help, name, type) => {
+        lines.push(`# HELP ${name} ${help}`, `# TYPE ${name} ${type}`);
+      };
+      add('1 if the whole customer journey passed on the last run', 'gada_synthetic_journey_success', 'gauge');
+      for (const t of TARGETS) lines.push(`gada_synthetic_journey_success{env="${t.env}"} ${state[t.env].journey}`);
+      add('1 if this step passed on the last run', 'gada_synthetic_success', 'gauge');
+      for (const t of TARGETS) for (const n of STEPS) lines.push(`gada_synthetic_success{env="${t.env}",step="${n}"} ${state[t.env].steps[n].success}`);
+      add('Duration of this step on the last run', 'gada_synthetic_duration_seconds', 'gauge');
+      for (const t of TARGETS) for (const n of STEPS) lines.push(`gada_synthetic_duration_seconds{env="${t.env}",step="${n}"} ${state[t.env].steps[n].seconds}`);
+      add('Check results by step', 'gada_synthetic_checks_total', 'counter');
+      for (const t of TARGETS) for (const n of STEPS) for (const k of ['ok', 'fail', 'skipped']) {
+        lines.push(`gada_synthetic_checks_total{env="${t.env}",step="${n}",result="${k}"} ${state[t.env].counts[n][k]}`);
+      }
+      add('Unix time of the last finished run', 'gada_synthetic_last_run_timestamp_seconds', 'gauge');
+      for (const t of TARGETS) lines.push(`gada_synthetic_last_run_timestamp_seconds{env="${t.env}"} ${state[t.env].lastRun}`);
+      return lines.join('\n') + '\n';
+    }
+
+    http.createServer((req, res) => {
+      if (req.url === '/metrics') {
+        res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
+        res.end(metrics());
+      } else if (req.url === '/healthz') {
+        res.writeHead(200);
+        res.end('ok');
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    }).listen(PORT, () => log('info', 'synthetic monitor started', { targets: TARGETS.map((t) => t.env), intervalMs: INTERVAL_MS }));
+
+    for (const t of TARGETS) {
+      let running = false;
+      const run = async () => {
+        if (running) return; // never overlap runs for one target
+        running = true;
+        try { await tick(t); } finally { running = false; }
+      };
+      run();
+      setInterval(run, INTERVAL_MS);
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gada-synthetic
+  namespace: monitoring
+  labels:
+    app: gada-synthetic
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gada-synthetic
+  template:
+    metadata:
+      labels:
+        app: gada-synthetic
+      annotations:
+        # Changes when the script changes, so the pod restarts with the new code.
+        checksum/script: "351a67bc9975ae87"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: synthetic
+          image: node:22-alpine
+          command: ["node", "/app/synthetic.js"]
+          env:
+            - name: TARGETS
+              value: '[{"env": "stage", "url": "http://gada-app.gada-stage.svc.cluster.local"}, {"env": "preprod", "url": "http://gada-app.gada-preprod.svc.cluster.local"}, {"env": "prod", "url": "http://gada-app.gada-prod.svc.cluster.local"}]'
+            - name: INTERVAL_SECONDS
+              value: "30"
+            - name: TIMEOUT_MS
+              value: "5000"
+            - name: MONITOR_EMAIL
+              value: monitor@gada.local
+            - name: MONITOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: synthetic-monitor
+                  key: password
+          ports:
+            - name: metrics
+              containerPort: 9101
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: gada-synthetic-script
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: gada-synthetic
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: gada-synthetic
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
