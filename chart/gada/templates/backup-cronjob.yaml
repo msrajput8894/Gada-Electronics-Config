@@ -1,0 +1,76 @@
+{{- if .Values.backup.enabled }}
+# Nightly MongoDB dump, uploaded to S3 through the node's IAM role (no stored credentials).
+# Step 1 (mongodump) writes to a scratch volume, step 2 (aws cli) uploads it.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gada-mongo-backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app: gada-mongo-backup
+        spec:
+          restartPolicy: OnFailure
+          volumes:
+            - name: backup
+              emptyDir: {}
+          initContainers:
+            - name: dump
+              image: mongo:7.0
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  mongodump --uri="$MONGO_URI" --db=gada --archive=/backup/gada.archive.gz --gzip
+                  ls -l /backup
+              env:
+                - name: MONGO_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.secretName }}
+                      key: mongo-root-password
+                - name: MONGO_URI
+                  value: mongodb://gada_root:$(MONGO_PASSWORD)@mongo-0.mongo.{{ .Release.Namespace }}.svc.cluster.local:27017/?authSource=admin
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 384Mi
+          containers:
+            - name: upload
+              image: amazon/aws-cli:2.17.0
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  KEY="{{ .Release.Namespace }}/gada-$(date -u +%Y%m%d-%H%M%S).archive.gz"
+                  aws s3 cp /backup/gada.archive.gz "s3://{{ .Values.backup.bucket }}/$KEY" --only-show-errors
+                  echo "uploaded s3://{{ .Values.backup.bucket }}/$KEY"
+              env:
+                - name: AWS_DEFAULT_REGION
+                  value: ap-south-1
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+{{- end }}
