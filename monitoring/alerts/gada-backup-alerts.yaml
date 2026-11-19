@@ -1,0 +1,33 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gada-backup-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: gada-backups
+      rules:
+        - alert: GadaBackupStaleProd
+          expr: |
+            (time() - kube_cronjob_status_last_successful_time{namespace="gada-prod", cronjob="gada-mongo-backup"} > 129600)
+            or
+            (time() - kube_cronjob_created{namespace="gada-prod", cronjob="gada-mongo-backup"} > 129600
+              unless on(namespace, cronjob) kube_cronjob_status_last_successful_time{cronjob="gada-mongo-backup"})
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No successful MongoDB backup in prod for 36 hours"
+            description: "The gada-mongo-backup CronJob in gada-prod has not succeeded recently. Check: kubectl -n gada-prod get jobs,pods | grep backup, then kubectl -n gada-prod logs job/<failed job> -c dump (or -c upload). Run one by hand: kubectl -n gada-prod create job --from=cronjob/gada-mongo-backup manual-backup"
+        - alert: GadaBackupStaleNonProd
+          expr: |
+            (time() - kube_cronjob_status_last_successful_time{namespace=~"gada-stage|gada-preprod", cronjob="gada-mongo-backup"} > 129600)
+            or
+            (time() - kube_cronjob_created{namespace=~"gada-stage|gada-preprod", cronjob="gada-mongo-backup"} > 129600
+              unless on(namespace, cronjob) kube_cronjob_status_last_successful_time{cronjob="gada-mongo-backup"})
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No successful MongoDB backup in {{ $labels.namespace }} for 36 hours"
+            description: "The gada-mongo-backup CronJob in {{ $labels.namespace }} has not succeeded recently. Check its jobs and pod logs in that namespace."
