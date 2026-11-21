@@ -1,0 +1,95 @@
+name: Validate
+
+on:
+  pull_request:
+    branches: [main]
+  # Promotion branches are pushed by a workflow, which does not start pull request runs,
+  # so the same checks also run when a promote-* branch is pushed.
+  push:
+    branches: ["promote-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chart:
+    name: Render and lint chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Lint and render every environment
+        run: |
+          set -euo pipefail
+          for env in stage preprod prod; do
+            echo "::group::$env"
+            helm lint chart/gada --strict -f "envs/$env/values.yaml"
+            out="$RUNNER_TEMP/render-$env.yaml"
+            helm template gada chart/gada -f "envs/$env/values.yaml" --namespace "gada-$env" > "$out"
+            for kind in Deployment StatefulSet CronJob Job; do
+              grep -q "^kind: $kind" "$out" || { echo "::error::$env render has no $kind"; exit 1; }
+            done
+            echo "::endgroup::"
+          done
+
+  monitoring:
+    name: Validate monitoring and Argo files
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check YAML syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r f; do
+            yq eval '.' "$f" > /dev/null || { echo "::error file=$f::invalid YAML"; exit 1; }
+          done < <(find apps monitoring envs \( -name '*.yaml' -o -name '*.yml' \))
+      - name: Check alert rules with promtool
+        run: |
+          set -euo pipefail
+          for f in monitoring/alerts/*.yaml; do
+            name="rules-$(basename "$f")"
+            yq eval '.spec' "$f" > "$RUNNER_TEMP/$name"
+            docker run --rm -v "$RUNNER_TEMP:/w:ro" --entrypoint promtool \
+              quay.io/prometheus/prometheus:v3.5.0 check rules "/w/$name"
+          done
+      - name: Check dashboards are valid JSON
+        run: |
+          set -euo pipefail
+          for f in monitoring/dashboards/*.yaml; do
+            for k in $(yq eval '.data | keys | .[]' "$f"); do
+              case "$k" in
+                *.json)
+                  yq eval ".data[\"$k\"]" "$f" | jq empty \
+                    || { echo "::error file=$f::$k is not valid JSON"; exit 1; }
+                  ;;
+              esac
+            done
+          done
+
+  scan:
+    name: Scan chart for misconfigurations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Scan the chart
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: config
+          scan-ref: chart/gada
+          version: v0.69.3
+          severity: CRITICAL,HIGH
+          format: table
+          # Report only until the pod security contexts are added. Then set to "1".
+          exit-code: "0"
