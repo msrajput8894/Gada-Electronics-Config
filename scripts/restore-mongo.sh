@@ -30,6 +30,10 @@ spec:
   backoffLimit: 0
   activeDeadlineSeconds: 1800
   template:
+    metadata:
+      labels:
+        app: gada-mongo-restore
+        mongo-client: "true"
     spec:
       restartPolicy: Never
       volumes:

@@ -3,3 +3,7 @@ image:
 hpa:
   minReplicas: 1
   maxReplicas: 2
+hardening:
+  enabled: true
+  mongo:
+    enabled: true

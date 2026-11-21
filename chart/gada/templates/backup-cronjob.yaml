@@ -20,8 +20,18 @@ spec:
         metadata:
           labels:
             app: gada-mongo-backup
+            mongo-client: "true"
         spec:
           restartPolicy: OnFailure
+          {{- if .Values.hardening.enabled }}
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          {{- end }}
           volumes:
             - name: backup
               emptyDir: {}
@@ -51,6 +61,12 @@ spec:
                   memory: 128Mi
                 limits:
                   memory: 384Mi
+              {{- if .Values.hardening.enabled }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              {{- end }}
           containers:
             - name: upload
               image: amazon/aws-cli:2.17.0
@@ -64,6 +80,8 @@ spec:
               env:
                 - name: AWS_DEFAULT_REGION
                   value: ap-south-1
+                - name: HOME
+                  value: /tmp
               volumeMounts:
                 - name: backup
                   mountPath: /backup
@@ -73,4 +91,10 @@ spec:
                   memory: 64Mi
                 limits:
                   memory: 256Mi
+              {{- if .Values.hardening.enabled }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              {{- end }}
 {{- end }}

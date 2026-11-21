@@ -21,7 +21,17 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app: gada-app
+        mongo-client: "true"
     spec:
+      {{- if .Values.hardening.enabled }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      {{- end }}
       containers:
         - name: app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -75,6 +85,21 @@ spec:
             failureThreshold: 3
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
+          {{- if .Values.hardening.enabled }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- end }}
+      {{- if .Values.hardening.enabled }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
