@@ -14,6 +14,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   promote:
@@ -58,3 +59,4 @@ jobs:
           gh pr create --base main --head "$BRANCH" \
             --title "Promote ${TAG} to ${TARGET}" \
             --body "Copies the version running in stage (${TAG}) into ${TARGET}. Merging this pull request is the approval: Argo CD will deploy it."
+          gh workflow run validate.yml --ref "$BRANCH"

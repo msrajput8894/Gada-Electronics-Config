@@ -3,10 +3,7 @@ name: Validate
 on:
   pull_request:
     branches: [main]
-  # Promotion branches are pushed by a workflow, which does not start pull request runs,
-  # so the same checks also run when a promote-* branch is pushed.
-  push:
-    branches: ["promote-*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
