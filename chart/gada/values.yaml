@@ -39,3 +39,8 @@ backup:
   enabled: true
   bucket: gada-backups-660880134652
   schedule: "30 20 * * *"   # 02:00 IST every night
+
+hardening:
+  enabled: false
+  mongo:
+    enabled: false

@@ -1,0 +1,13 @@
+{{- if .Values.hardening.enabled }}
+# At most one app pod may be taken down voluntarily (node drain, upgrade) at a time.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gada-app
+  namespace: {{ .Release.Namespace }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: gada-app
+{{- end }}

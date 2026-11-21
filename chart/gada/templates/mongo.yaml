@@ -27,6 +27,16 @@ spec:
       labels:
         app: mongo
     spec:
+      {{- if .Values.hardening.mongo.enabled }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      {{- end }}
       containers:
         - name: mongo
           image: mongo:7.0
@@ -49,6 +59,13 @@ spec:
             timeoutSeconds: 15
           resources:
             {{- toYaml .Values.mongo.resources | nindent 12 }}
+          {{- if .Values.hardening.mongo.enabled }}
+          # MongoDB writes to its root filesystem at start-up, so it cannot run read-only.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          {{- end }}
           volumeMounts:
             - name: data
               mountPath: /data/db
