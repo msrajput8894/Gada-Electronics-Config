@@ -32,6 +32,28 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       {{- end }}
+      # Wait until MongoDB accepts connections, so the app does not crash-loop while mongo-0 is still starting.
+      # This pod carries mongo-client: "true", so the network policy already allows this check.
+      initContainers:
+        - name: wait-for-mongo
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until nc -z -w 2 mongo-0.mongo.{{ .Release.Namespace }}.svc.cluster.local 27017; do echo "waiting for mongo"; sleep 2; done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+          {{- if .Values.hardening.enabled }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- end }}
       containers:
         - name: app
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
