@@ -41,6 +41,6 @@ backup:
   schedule: "30 20 * * *"   # 02:00 IST every night
 
 hardening:
-  enabled: false
+  enabled: true
   mongo:
-    enabled: false
+    enabled: true
