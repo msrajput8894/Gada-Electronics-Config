@@ -3,3 +3,6 @@ image:
 hpa:
   minReplicas: 1
   maxReplicas: 2
+
+rollout:
+  enabled: true

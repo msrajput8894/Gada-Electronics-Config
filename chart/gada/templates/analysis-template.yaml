@@ -1,0 +1,26 @@
+{{- if .Values.rollout.enabled }}
+# Health check used by the canary release: if the new pods return more than 5% server errors,
+# the rollout aborts and the old version keeps serving. Pods are matched by their template hash.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: gada-error-rate
+  namespace: {{ .Release.Namespace }}
+spec:
+  args:
+    - name: namespace
+    - name: canary-hash
+  metrics:
+    - name: error-rate
+      interval: 30s
+      count: 4
+      failureLimit: 1
+      successCondition: len(result) == 0 || result[0] < 0.05
+      provider:
+        prometheus:
+          address: http://monitoring-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            (sum(rate(http_request_duration_seconds_count{namespace="{{ `{{args.namespace}}` }}",pod=~"gada-app-{{ `{{args.canary-hash}}` }}-.*",status_code=~"5.."}[2m])) or vector(0))
+            /
+            sum(rate(http_request_duration_seconds_count{namespace="{{ `{{args.namespace}}` }}",pod=~"gada-app-{{ `{{args.canary-hash}}` }}-.*"}[2m]))
+{{- end }}
