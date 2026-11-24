@@ -29,8 +29,8 @@ jobs:
             helm lint chart/gada --strict -f "envs/$env/values.yaml"
             out="$RUNNER_TEMP/render-$env.yaml"
             helm template gada chart/gada -f "envs/$env/values.yaml" --namespace "gada-$env" > "$out"
-            for kind in Deployment StatefulSet CronJob Job; do
-              grep -q "^kind: $kind" "$out" || { echo "::error::$env render has no $kind"; exit 1; }
+            for kind in "(Deployment|Rollout)" StatefulSet CronJob Job; do
+              grep -qE "^kind: $kind" "$out" || { echo "::error::$env render has no $kind"; exit 1; }
             done
             echo "::endgroup::"
           done
