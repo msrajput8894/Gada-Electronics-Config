@@ -25,3 +25,10 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    # The Rollout type only exists once the rollouts controller is installed, so retry on a fresh cluster.
+    retry:
+      limit: 6
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
