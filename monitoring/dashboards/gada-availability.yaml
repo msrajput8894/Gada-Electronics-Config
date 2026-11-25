@@ -73,7 +73,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "100 * (1 - ((sum(rate(http_request_duration_seconds_count{namespace=\"$namespace\",status_code=~\"5..\"}[5m])) or vector(0)) / sum(rate(http_request_duration_seconds_count{namespace=\"$namespace\"}[5m])))) * clamp_max(sum(kube_deployment_status_replicas_available{namespace=\"$namespace\",deployment=\"gada-app\"}) or vector(0), 1)",
+              "expr": "100 * (1 - ((sum(rate(http_request_duration_seconds_count{namespace=\"$namespace\",status_code=~\"5..\"}[5m])) or vector(0)) / sum(rate(http_request_duration_seconds_count{namespace=\"$namespace\"}[5m])))) * clamp_max(sum(kube_pod_status_ready{namespace=\"$namespace\",condition=\"true\",pod=~\"gada-app-.*\"}) or vector(0), 1)",
               "legendFormat": "",
               "refId": "A",
               "editorMode": "code"
@@ -136,7 +136,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(kube_deployment_status_replicas_available{namespace=\"$namespace\",deployment=\"gada-app\"}) or vector(0)",
+              "expr": "sum(kube_pod_status_ready{namespace=\"$namespace\",condition=\"true\",pod=~\"gada-app-.*\"}) or vector(0)",
               "legendFormat": "",
               "refId": "A",
               "editorMode": "code"
@@ -551,7 +551,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(kube_deployment_status_replicas_available{namespace=\"$namespace\",deployment=\"gada-app\"})",
+              "expr": "sum(kube_pod_status_ready{namespace=\"$namespace\",condition=\"true\",pod=~\"gada-app-.*\"})",
               "legendFormat": "available",
               "refId": "A",
               "editorMode": "code"
@@ -561,7 +561,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum(kube_deployment_spec_replicas{namespace=\"$namespace\",deployment=\"gada-app\"})",
+              "expr": "sum(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"$namespace\",horizontalpodautoscaler=\"gada-app\"})",
               "legendFormat": "desired",
               "refId": "B",
               "editorMode": "code"
