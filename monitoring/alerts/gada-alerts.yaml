@@ -76,7 +76,7 @@ spec:
     - name: gada-availability
       rules:
         - alert: GadaAppUnavailable
-          expr: kube_deployment_status_replicas_available{deployment="gada-app"} == 0
+          expr: '(sum by (namespace) (kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="gada-app"}) > 0) unless on(namespace) (sum by (namespace) (kube_pod_status_ready{condition="true",pod=~"gada-app-.*"}) > 0)'
           for: 2m
           labels:
             severity: critical
