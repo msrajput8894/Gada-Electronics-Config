@@ -1,0 +1,28 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gada-capacity-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: gada-capacity
+      rules:
+        # Warns hours before an out-of-memory kill: the last hour's trend, projected 4 hours ahead,
+        # would cross the container's memory limit, and the container already uses over half of it.
+        - alert: GadaMemoryTrendHigh
+          expr: |
+            (
+              predict_linear(container_memory_working_set_bytes{namespace=~"gada-.*",container!="",container!="POD"}[1h], 4 * 3600)
+                > on (namespace, pod, container) kube_pod_container_resource_limits{resource="memory"}
+            )
+            and on (namespace, pod, container)
+            (
+              container_memory_working_set_bytes{namespace=~"gada-.*",container!="",container!="POD"}
+                / on (namespace, pod, container) kube_pod_container_resource_limits{resource="memory"} > 0.5
+            )
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) is on course to hit its memory limit within 4 hours"
+            runbook: "Check the memory panel in Grafana for a leak; kubectl -n {{ $labels.namespace }} top pod; restart the pod if it keeps climbing, then look at the last release"
