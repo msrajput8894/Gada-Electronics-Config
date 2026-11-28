@@ -35,6 +35,17 @@ spec:
           annotations:
             summary: "p95 latency above 1s in {{ $labels.namespace }}"
             runbook: "Check CPU and memory panels, MongoDB pod health, and recent deploys"
+        - alert: GadaCheckoutFailuresHigh
+          expr: |
+            sum by (namespace) (
+              increase(gada_checkout_failures_total{reason=~"product_unavailable|out_of_stock|error"}[5m])
+            ) >= 5
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "At least 5 checkout failures in 5 minutes in {{ $labels.namespace }}"
+            runbook: "Open the Gada checkout health dashboard and inspect failures by reason; check app logs for error failures, or inventory/catalog changes for unavailable and out-of-stock failures. Empty-cart events are excluded."
     - name: kubernetes-health
       rules:
         - alert: PodRestartingOften
